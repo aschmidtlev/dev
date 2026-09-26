@@ -13,6 +13,7 @@ Dieser Entwurf betrifft die **Raumheizung** (Heizkreis) der Wärmepumpe und ist 
 - `sensor.home_strompreis` – natives Preis-Sensor der offiziellen Tibber-Integration, mit `intraday_price_ranking` (0–1) als eingebautem Tagespreisrang
 - `switch.boiler_heatingoff` – natives EMS-ESP-Signal „Force heating off" über das BBQKees-Gateway am Service-Bus der Wärmepumpe. Das ist der korrekte Sperrpunkt.
 - `climate.thermostat_hc1` – natives ems-esp-Thermostat des Heizkreises hc1, `hvac_modes: [auto, heat]`, unterstützt `target_temperature`
+- `sensor.marstek_venus_modbus_wechselrichter_status` / `sensor.marstek_venus_modbus_soc_batterie` – natives Modbus-Gerät des Marstek-Speichers, Lade-/Entladestatus und SoC in %
 
 **Korrektur gegenüber einer früheren Entwurfsversion:** Zunächst war `switch.warmepumpe` (ein Shelly-Relais) als Sperrpunkt vorgesehen. Andreas hat klargestellt, dass dieser Shelly gar nichts schaltet (reine Messung/Anzeige) und stattdessen die MQTT-Werte des EMS-ESP-Gateways (BBQKees) am Service-Bus der Wärmepumpe die validen Steuerpunkte sind. `switch.boiler_heatingoff` ist genau dafür vorgesehen (Software-Sperrsignal auf dem EMS-Bus, kein hartes Abschalten der Stromversorgung) und wird deshalb jetzt verwendet.
 
@@ -22,18 +23,25 @@ Keine neuen HA-Helper oder eigene Interlock-Automation. n8n liest bei jedem Lauf
 
 **Dynamische statt fester Schwellen:** Auf Nachfrage von Andreas, ob feste ct/kWh-Schwellen zeitpunktabhängig sinnvoller gelöst werden können – ja. Statt absoluter ct/kWh-Werte nutzt der Workflow das Attribut `intraday_price_ranking` von `sensor.home_strompreis` (offizielle Tibber-Integration): ein Wert zwischen 0 (günstigste Stunde des Tages) und 1 (teuerste Stunde des Tages), von Tibber selbst laufend aus den bekannten Preisdaten berechnet. Damit passen sich die Schwellen automatisch an das jeweils aktuelle Preisniveau an (z. B. an einen insgesamt teuren oder günstigen Tag), ohne dass ct/kWh-Werte manuell nachgepflegt werden müssen.
 
+**Speicher (Marstek) als Korrektiv:** Auf Nachfrage von Andreas berücksichtigt der Workflow zusätzlich den Marstek-Hausspeicher, damit die reine Preisrang-Logik nicht gegen das läuft, was am Speicher gerade ohnehin passiert:
+- Entlädt der Speicher gerade (`wechselrichter_status == Discharge`), wird eine Sperre unterdrückt bzw. eine bestehende Sperre aufgehoben – die Energie kommt dann aus dem Speicher, der Netzpreis ist für diese Stunde weitgehend irrelevant.
+- Lädt der Speicher und der SoC liegt bereits über 80% (analog zur Freigabe-Schwelle, die auch das WW-System nutzt), wird zusätzlich zum Preisrang auch das als Boost-Grund gewertet – sonst würde PV-Überschuss ggf. nur noch mit wenig Ertrag eingespeist.
+- Der Speicher kann nie zusätzlich eine Sperre auslösen, nur eine preisbedingte Sperre verhindern/aufheben bzw. einen Boost vorziehen – der Preisrang bleibt der Standardfall. Für den SoC gibt es eine eigene Hysterese (±3 Prozentpunkte) gegen Takten an der Schwelle.
+
+Es gibt keine separate Messung, wie viel vom Speicher-Ausstoß speziell in die Wärmepumpe fließt – das bleibt eine Näherung auf Ebene des Gesamthaushalts, keine exakte Zuordnung.
+
 ## n8n-Workflow
 
 Datei: [`n8n/preissteuerung-waermepumpe.json`](../n8n/preissteuerung-waermepumpe.json)
 
 Ablauf (alle 15 Minuten):
-1. Liest `sensor.home_strompreis` (inkl. `intraday_price_ranking`), `switch.boiler_heatingoff` und `climate.thermostat_hc1` aus HA.
-2. Berechnet in einem Code-Node mit Hysterese (±0.05 Perzentil um zwei Schwellen, Default 0.85/0.15 = teuerste/günstigste 15% der Stunden):
-   - **Sperre**: `switch.boiler_heatingoff` an, wenn der Preisrang deutlich über der Sperrschwelle liegt; wieder aus, wenn deutlich darunter.
-   - **Boost**: `climate.thermostat_hc1` auf `hvac_mode: heat`, wenn der Preisrang deutlich unter der Boostschwelle liegt und die Wärmepumpe nicht gesperrt ist/wird; zurück auf `auto`, wenn der Preisrang wieder darüber liegt.
+1. Liest `sensor.home_strompreis` (inkl. `intraday_price_ranking`), `switch.boiler_heatingoff`, `climate.thermostat_hc1`, `sensor.marstek_venus_modbus_wechselrichter_status` und `sensor.marstek_venus_modbus_soc_batterie` aus HA.
+2. Berechnet in einem Code-Node mit Hysterese (±0.05 Perzentil um zwei Preis-Schwellen, Default 0.85/0.15 = teuerste/günstigste 15% der Stunden; ±3 Prozentpunkte um die Speicher-SoC-Schwelle, Default 80%):
+   - **Sperre**: `switch.boiler_heatingoff` an, wenn der Preisrang deutlich über der Sperrschwelle liegt und der Speicher nicht gerade entlädt; wieder aus, wenn der Preisrang deutlich darunter liegt oder der Speicher zu entladen beginnt.
+   - **Boost**: `climate.thermostat_hc1` auf `hvac_mode: heat`, wenn der Preisrang deutlich unter der Boostschwelle liegt oder der Speicher lädt und gut gefüllt ist (SoC > 80%), und die Wärmepumpe nicht gesperrt ist/wird; zurück auf `auto`, wenn beide Boost-Gründe entfallen.
 3. Ruft nur bei tatsächlich nötiger Änderung den entsprechenden HA-Service auf (`switch.turn_on/off`, `climate.set_hvac_mode`).
 
-Schwellen (`sperrschwelle`, `boostschwelle`, `hysterese`, jeweils als Perzentil 0–1) stehen als Konstanten oben im Code-Node – zum Anpassen den Workflow in n8n öffnen und dort editieren, keine separate HA-Konfiguration nötig.
+Schwellen (`sperrschwelle`, `boostschwelle`, `hysterese`, `speicherFreigabeSoc`, `speicherHystereseSoc`) stehen als Konstanten oben im Code-Node – zum Anpassen den Workflow in n8n öffnen und dort editieren, keine separate HA-Konfiguration nötig.
 
 ### Setup in n8n
 - Environment-Variable `HA_BASE_URL` (z. B. `http://homeassistant.local:8123`).

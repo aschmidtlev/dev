@@ -77,7 +77,45 @@
     },
     {
       "parameters": {
-        "numberInputs": 3
+        "url": "={{ $env.HA_BASE_URL }}/api/states/sensor.marstek_venus_modbus_wechselrichter_status",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http-speicherstatus",
+      "name": "HA: Speicher-Status lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-740, 480],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
+          "name": "HA Long-Lived Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HA_BASE_URL }}/api/states/sensor.marstek_venus_modbus_soc_batterie",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http-speichersoc",
+      "name": "HA: Speicher-SoC lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-740, 620],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
+          "name": "HA Long-Lived Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "numberInputs": 5
       },
       "id": "merge-inputs",
       "name": "Werte zusammenführen",
@@ -87,7 +125,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// --- Konfiguration: hier anpassen, keine eigenen HA-Helper nötig ---\n// Schwellen als Perzentil (0-1) statt fixer ct/kWh-Werte: passen sich automatisch an\n// das Preisniveau des jeweiligen Tages an (dynamisch statt starr), Basis ist das native\n// intraday_price_ranking-Attribut der offiziellen Tibber-Integration (0 = günstigste,\n// 1 = teuerste Stunde des Tages).\nconst sperrschwelle = 0.85;    // teuerste 15% der Stunden -> sperren\nconst boostschwelle = 0.15;    // günstigste 15% der Stunden -> boosten\nconst hysterese = 0.05;        // Perzentil-Puffer gegen Takten am Schwellwert\n// ---------------------------------------------------------------\n\nconst rang = parseFloat($input.all()[0].json.attributes.intraday_price_ranking);\nconst sperreAktuellAn = $input.all()[1].json.state === 'on'; // switch.boiler_heatingoff an = aktuell gesperrt\nconst hvacAktuell = $input.all()[2].json.state; // 'auto' | 'heat'\n\n// Sperre: switch.boiler_heatingoff (natives EMS-ESP-Signal \"Force heating off\") einschalten,\n// wenn der Preisrang deutlich über der Schwelle liegt, wieder ausschalten wenn deutlich darunter.\nlet sperre_service = null;\nif (!sperreAktuellAn && rang > sperrschwelle + hysterese) {\n  sperre_service = 'turn_on'; // Force heating off aktivieren = sperren\n} else if (sperreAktuellAn && rang <= sperrschwelle - hysterese) {\n  sperre_service = 'turn_off'; // Sperre aufheben\n}\n\n// Boost: hvac_mode 'heat' erzwingt aktives Heizen (statt witterungsgeführt 'auto'),\n// wenn der Preisrang günstig ist. Keine Änderung, wenn gerade gesperrt wird/ist.\nlet climate_hvac_mode = null;\nconst wirdOderIstGesperrt = sperre_service === 'turn_on' || (sperreAktuellAn && sperre_service !== 'turn_off');\nif (!wirdOderIstGesperrt) {\n  if (hvacAktuell !== 'heat' && rang < boostschwelle - hysterese) {\n    climate_hvac_mode = 'heat';\n  } else if (hvacAktuell !== 'auto' && rang >= boostschwelle + hysterese) {\n    climate_hvac_mode = 'auto';\n  }\n}\n\nreturn [{\n  json: { rang, sperreAktuellAn, hvacAktuell, sperre_service, climate_hvac_mode }\n}];"
+        "jsCode": "// --- Konfiguration: hier anpassen, keine eigenen HA-Helper nötig ---\n// Schwellen als Perzentil (0-1) statt fixer ct/kWh-Werte: passen sich automatisch an\n// das Preisniveau des jeweiligen Tages an (dynamisch statt starr), Basis ist das native\n// intraday_price_ranking-Attribut der offiziellen Tibber-Integration (0 = günstigste,\n// 1 = teuerste Stunde des Tages).\nconst sperrschwelle = 0.85;    // teuerste 15% der Stunden -> sperren\nconst boostschwelle = 0.15;    // günstigste 15% der Stunden -> boosten\nconst hysterese = 0.05;        // Perzentil-Puffer gegen Takten am Schwellwert\nconst speicherFreigabeSoc = 80; // % SoC, ab dem ladender Speicher einen Boost rechtfertigt (analog WW-System)\nconst speicherHystereseSoc = 3; // % Puffer gegen Takten an der SoC-Schwelle\n// ---------------------------------------------------------------\n\nconst rang = parseFloat($input.all()[0].json.attributes.intraday_price_ranking);\nconst sperreAktuellAn = $input.all()[1].json.state === 'on'; // switch.boiler_heatingoff an = aktuell gesperrt\nconst hvacAktuell = $input.all()[2].json.state; // 'auto' | 'heat'\nconst speicherStatus = $input.all()[3].json.state; // 'Charge' | 'Discharge' | ...\nconst speicherSoc = parseFloat($input.all()[4].json.state);\n\nconst speicherEntlaedt = speicherStatus === 'Discharge';\n\n// Sperre: switch.boiler_heatingoff (natives EMS-ESP-Signal \"Force heating off\") einschalten,\n// wenn der Preisrang deutlich über der Schwelle liegt UND der Speicher nicht gerade entlädt\n// (dann kommt die Energie ohnehin aus dem Speicher, der Netzpreis ist für diese Stunde\n// weitgehend irrelevant). Wieder ausschalten, wenn der Preisrang deutlich darunter liegt\n// ODER der Speicher zu entladen beginnt.\nlet sperre_service = null;\nif (!sperreAktuellAn && rang > sperrschwelle + hysterese && !speicherEntlaedt) {\n  sperre_service = 'turn_on'; // Force heating off aktivieren = sperren\n} else if (sperreAktuellAn && (rang <= sperrschwelle - hysterese || speicherEntlaedt)) {\n  sperre_service = 'turn_off'; // Sperre aufheben\n}\n\n// Boost: hvac_mode 'heat' erzwingt aktives Heizen (statt witterungsgeführt 'auto'), wenn\n// entweder der Preisrang günstig ist ODER der Speicher lädt und bereits gut gefüllt ist\n// (dann würde PV-Überschuss sonst nur noch mit wenig Ertrag eingespeist). Keine Änderung,\n// wenn gerade gesperrt wird/ist.\nconst boostWegenPreis = rang < boostschwelle - hysterese;\nconst boostEndeWegenPreis = rang >= boostschwelle + hysterese;\nconst boostWegenSpeicher = speicherStatus === 'Charge' && speicherSoc > speicherFreigabeSoc + speicherHystereseSoc;\nconst boostEndeWegenSpeicher = speicherStatus !== 'Charge' || speicherSoc <= speicherFreigabeSoc - speicherHystereseSoc;\n\nlet climate_hvac_mode = null;\nconst wirdOderIstGesperrt = sperre_service === 'turn_on' || (sperreAktuellAn && sperre_service !== 'turn_off');\nif (!wirdOderIstGesperrt) {\n  if (hvacAktuell !== 'heat' && (boostWegenPreis || boostWegenSpeicher)) {\n    climate_hvac_mode = 'heat';\n  } else if (hvacAktuell !== 'auto' && boostEndeWegenPreis && boostEndeWegenSpeicher) {\n    climate_hvac_mode = 'auto';\n  }\n}\n\nreturn [{\n  json: { rang, sperreAktuellAn, hvacAktuell, speicherStatus, speicherSoc, sperre_service, climate_hvac_mode }\n}];"
       },
       "id": "code-entscheidung",
       "name": "Entscheidung berechnen",
@@ -202,7 +240,9 @@
         [
           { "node": "HA: Preis lesen", "type": "main", "index": 0 },
           { "node": "HA: Sperr-Status lesen", "type": "main", "index": 0 },
-          { "node": "HA: Heizkreis-Status lesen", "type": "main", "index": 0 }
+          { "node": "HA: Heizkreis-Status lesen", "type": "main", "index": 0 },
+          { "node": "HA: Speicher-Status lesen", "type": "main", "index": 0 },
+          { "node": "HA: Speicher-SoC lesen", "type": "main", "index": 0 }
         ]
       ]
     },
@@ -214,6 +254,12 @@
     },
     "HA: Heizkreis-Status lesen": {
       "main": [[{ "node": "Werte zusammenführen", "type": "main", "index": 2 }]]
+    },
+    "HA: Speicher-Status lesen": {
+      "main": [[{ "node": "Werte zusammenführen", "type": "main", "index": 3 }]]
+    },
+    "HA: Speicher-SoC lesen": {
+      "main": [[{ "node": "Werte zusammenführen", "type": "main", "index": 4 }]]
     },
     "Werte zusammenführen": {
       "main": [[{ "node": "Entscheidung berechnen", "type": "main", "index": 0 }]]
