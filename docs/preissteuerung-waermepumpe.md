@@ -38,10 +38,13 @@ Schwellen (`sperrschwelle`, `boostschwelle`, `hysterese`) stehen als Konstanten 
 - Credential vom Typ „Header Auth" namens „HA Long-Lived Token" mit Header `Authorization: Bearer <Long-Lived Access Token>`. Die Platzhalter-Credential-ID (`PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID`) muss beim Import in n8n neu verknüpft werden.
 - Workflow ist beim Import inaktiv (`active: false`) – bewusst, erst nach finaler Prüfung durch Andreas scharf schalten.
 
+## Geprüft: kein Konflikt mit Warmwasser/WW-System
+
+Nur ein Heizkreis (`hc1`) vorhanden, keine weiteren Heizkreise betroffen. Laut EMS-ESP-Dokumentation ist `forceheatingoff` genau für Wärmepumpen gedacht (ein einfaches Aus-Schalten über „Heating Activated" funktioniert bei Wärmepumpen im Gegensatz zu Gaskesseln nicht zuverlässig). Andreas hat bestätigt, dass die Warmwasserbereitung/-Ladung (WW-System) von `switch.boiler_heatingoff` unberührt bleibt – kein Interferenzrisiko mit der bestehenden WW-Preissteuerung.
+
 ## Restrisiken / offene Punkte
 
 - Kein Blick auf reale Mindestlaufzeiten/-standzeiten des Kompressors: Die Hysterese verhindert Takten am Preis-Schwellwert, aber nicht bei schnell schwankendem Preis über mehrere Intervalle. Falls der Kompressor empfindlich reagiert, ggf. Hysterese vergrößern oder Mindest-Intervall zwischen zwei Schaltvorgängen im Code-Node ergänzen.
-- `switch.boiler_heatingoff` wirkt vermutlich auf den gesamten Heizbetrieb (nicht nur hc1) – falls es weitere Heizkreise gibt, die davon nicht betroffen sein sollen, vor dem Aktivieren mit Andreas klären.
 
 ## Nächste Schritte (nach Freigabe durch Andreas)
 
