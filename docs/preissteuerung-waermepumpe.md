@@ -10,7 +10,7 @@ Dieser Entwurf betrifft die **Raumheizung** (Heizkreis) der Wärmepumpe und ist 
 
 ## Bestand, relevant für Raumheizung
 
-- `sensor.home_stunden_preis_aktuell` – geglätteter aktueller Preis (ct/kWh, Tibber)
+- `sensor.home_strompreis` – natives Preis-Sensor der offiziellen Tibber-Integration, mit `intraday_price_ranking` (0–1) als eingebautem Tagespreisrang
 - `switch.boiler_heatingoff` – natives EMS-ESP-Signal „Force heating off" über das BBQKees-Gateway am Service-Bus der Wärmepumpe. Das ist der korrekte Sperrpunkt.
 - `climate.thermostat_hc1` – natives ems-esp-Thermostat des Heizkreises hc1, `hvac_modes: [auto, heat]`, unterstützt `target_temperature`
 
@@ -18,20 +18,22 @@ Dieser Entwurf betrifft die **Raumheizung** (Heizkreis) der Wärmepumpe und ist 
 
 ## Architekturentscheidung
 
-Keine neuen HA-Helper oder eigene Interlock-Automation. n8n liest bei jedem Lauf den aktuellen Zustand direkt aus den Original-Entities (`sensor.home_stunden_preis_aktuell`, `switch.boiler_heatingoff`, `climate.thermostat_hc1`) und wendet die Hysterese auf diesen tatsächlichen Zustand an – dadurch ist die Logik zustandslos (kein Gedächtnis in n8n nötig, übersteht Neustarts) und ausschließlich native HA-Zustände sind maßgeblich. Fällt n8n aus, bleibt die Wärmepumpe einfach im zuletzt gesetzten Zustand.
+Keine neuen HA-Helper oder eigene Interlock-Automation. n8n liest bei jedem Lauf den aktuellen Zustand direkt aus den Original-Entities (`sensor.home_strompreis`, `switch.boiler_heatingoff`, `climate.thermostat_hc1`) und wendet die Hysterese auf diesen tatsächlichen Zustand an – dadurch ist die Logik zustandslos (kein Gedächtnis in n8n nötig, übersteht Neustarts) und ausschließlich native HA-Zustände sind maßgeblich. Fällt n8n aus, bleibt die Wärmepumpe einfach im zuletzt gesetzten Zustand.
+
+**Dynamische statt fester Schwellen:** Auf Nachfrage von Andreas, ob feste ct/kWh-Schwellen zeitpunktabhängig sinnvoller gelöst werden können – ja. Statt absoluter ct/kWh-Werte nutzt der Workflow das Attribut `intraday_price_ranking` von `sensor.home_strompreis` (offizielle Tibber-Integration): ein Wert zwischen 0 (günstigste Stunde des Tages) und 1 (teuerste Stunde des Tages), von Tibber selbst laufend aus den bekannten Preisdaten berechnet. Damit passen sich die Schwellen automatisch an das jeweils aktuelle Preisniveau an (z. B. an einen insgesamt teuren oder günstigen Tag), ohne dass ct/kWh-Werte manuell nachgepflegt werden müssen.
 
 ## n8n-Workflow
 
 Datei: [`n8n/preissteuerung-waermepumpe.json`](../n8n/preissteuerung-waermepumpe.json)
 
 Ablauf (alle 15 Minuten):
-1. Liest `sensor.home_stunden_preis_aktuell`, `switch.boiler_heatingoff` und `climate.thermostat_hc1` aus HA.
-2. Berechnet in einem Code-Node mit Hysterese (±1.5 ct/kWh um zwei Schwellen, Default 40/20 ct/kWh):
-   - **Sperre**: `switch.boiler_heatingoff` an, wenn Preis deutlich über der Sperrschwelle; wieder aus, wenn deutlich darunter.
-   - **Boost**: `climate.thermostat_hc1` auf `hvac_mode: heat`, wenn Preis deutlich unter der Boostschwelle und die Wärmepumpe nicht gesperrt ist/wird; zurück auf `auto`, wenn der Preis wieder darüber liegt.
+1. Liest `sensor.home_strompreis` (inkl. `intraday_price_ranking`), `switch.boiler_heatingoff` und `climate.thermostat_hc1` aus HA.
+2. Berechnet in einem Code-Node mit Hysterese (±0.05 Perzentil um zwei Schwellen, Default 0.85/0.15 = teuerste/günstigste 15% der Stunden):
+   - **Sperre**: `switch.boiler_heatingoff` an, wenn der Preisrang deutlich über der Sperrschwelle liegt; wieder aus, wenn deutlich darunter.
+   - **Boost**: `climate.thermostat_hc1` auf `hvac_mode: heat`, wenn der Preisrang deutlich unter der Boostschwelle liegt und die Wärmepumpe nicht gesperrt ist/wird; zurück auf `auto`, wenn der Preisrang wieder darüber liegt.
 3. Ruft nur bei tatsächlich nötiger Änderung den entsprechenden HA-Service auf (`switch.turn_on/off`, `climate.set_hvac_mode`).
 
-Schwellen (`sperrschwelle`, `boostschwelle`, `hysterese`) stehen als Konstanten oben im Code-Node – zum Anpassen den Workflow in n8n öffnen und dort editieren, keine separate HA-Konfiguration nötig.
+Schwellen (`sperrschwelle`, `boostschwelle`, `hysterese`, jeweils als Perzentil 0–1) stehen als Konstanten oben im Code-Node – zum Anpassen den Workflow in n8n öffnen und dort editieren, keine separate HA-Konfiguration nötig.
 
 ### Setup in n8n
 - Environment-Variable `HA_BASE_URL` (z. B. `http://homeassistant.local:8123`).
@@ -45,6 +47,7 @@ Nur ein Heizkreis (`hc1`) vorhanden, keine weiteren Heizkreise betroffen. Laut E
 ## Restrisiken / offene Punkte
 
 - Kein Blick auf reale Mindestlaufzeiten/-standzeiten des Kompressors: Die Hysterese verhindert Takten am Preis-Schwellwert, aber nicht bei schnell schwankendem Preis über mehrere Intervalle. Falls der Kompressor empfindlich reagiert, ggf. Hysterese vergrößern oder Mindest-Intervall zwischen zwei Schaltvorgängen im Code-Node ergänzen.
+- `intraday_price_ranking` bezieht sich auf die Tibber-seitig jeweils bekannten Preise (vormittags meist nur der heutige Tag, ab Nachmittag zusätzlich der Folgetag). Der Rang einer frühen Morgenstunde kann sich also im Tagesverlauf verschieben, sobald die Preise für den nächsten Tag bekannt werden – das ist gewolltes Tibber-Verhalten, aber gut zu wissen, falls sich eine Sperr-/Boost-Entscheidung im Tagesverlauf einmal "nachträglich" anders anfühlt als erwartet.
 
 ## Nächste Schritte (nach Freigabe durch Andreas)
 
