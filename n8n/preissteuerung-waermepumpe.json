@@ -1,0 +1,269 @@
+{
+  "name": "Wärmepumpe – Preissteuerung (Sperre/Boost)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "trigger-schedule",
+      "name": "Alle 15 Minuten",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-1120, 260]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HA_BASE_URL }}/api/states/sensor.home_stunden_preis_aktuell",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http-preis",
+      "name": "HA: Aktuellen Preis lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-880, 40],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
+          "name": "HA Long-Lived Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HA_BASE_URL }}/api/states/input_number.wp_sperrschwelle",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http-sperrschwelle",
+      "name": "HA: Sperrschwelle lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-880, 180],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
+          "name": "HA Long-Lived Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HA_BASE_URL }}/api/states/input_number.wp_boostschwelle",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http-boostschwelle",
+      "name": "HA: Boostschwelle lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-880, 320],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
+          "name": "HA Long-Lived Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.HA_BASE_URL }}/api/states/input_boolean.wp_preissteuerung_aktiv",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http-aktiv",
+      "name": "HA: Steuerung aktiv?",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-880, 460],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
+          "name": "HA Long-Lived Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "numberInputs": 4
+      },
+      "id": "merge-inputs",
+      "name": "Werte zusammenführen",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [-620, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Erwartet 4 Inputs (per Position): Preis, Sperrschwelle, Boostschwelle, Aktiv-Flag\nconst preis = parseFloat($input.all()[0].json.state);\nconst sperrschwelle = parseFloat($input.all()[1].json.state);\nconst boostschwelle = parseFloat($input.all()[2].json.state);\nconst aktiv = $input.all()[3].json.state === 'on';\n\n// Hysterese, um Takten am Schwellwert zu vermeiden (ct/kWh)\nconst hysterese = 1.5;\n\nconst sperreAn = aktiv && preis > (sperrschwelle + hysterese);\nconst sperreAus = !aktiv || preis <= (sperrschwelle - hysterese);\nconst boostAn = aktiv && preis < (boostschwelle - hysterese);\nconst boostAus = !aktiv || preis >= (boostschwelle + hysterese);\n\n// Bei Werten innerhalb der Hysteresebreite: vorherigen Zustand halten (kein Service-Call unten notwendig,\n// da HA turn_on/turn_off idempotent sind – wir wählen hier bewusst nur einen klaren An/Aus-Fall).\nreturn [{\n  json: {\n    preis,\n    sperrschwelle,\n    boostschwelle,\n    aktiv,\n    sperre_service: sperreAn ? 'turn_on' : (sperreAus ? 'turn_off' : null),\n    boost_service: boostAn ? 'turn_on' : (boostAus ? 'turn_off' : null)\n  }\n}];"
+      },
+      "id": "code-entscheidung",
+      "name": "Entscheidung berechnen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, 260]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.sperre_service }}",
+              "rightValue": null,
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-sperre",
+      "name": "Sperre-Änderung nötig?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-160, 140]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.boost_service }}",
+              "rightValue": null,
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-boost",
+      "name": "Boost-Änderung nötig?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-160, 380]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.HA_BASE_URL }}/api/services/input_boolean/{{ $json.sperre_service }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"entity_id\": \"input_boolean.wp_sperre\"}",
+        "options": {}
+      },
+      "id": "http-sperre-setzen",
+      "name": "HA: Sperre setzen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [80, 100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
+          "name": "HA Long-Lived Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.HA_BASE_URL }}/api/services/input_boolean/{{ $json.boost_service }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"entity_id\": \"input_boolean.wp_boost\"}",
+        "options": {}
+      },
+      "id": "http-boost-setzen",
+      "name": "HA: Boost setzen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [80, 420],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
+          "name": "HA Long-Lived Token"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Alle 15 Minuten": {
+      "main": [
+        [
+          { "node": "HA: Aktuellen Preis lesen", "type": "main", "index": 0 },
+          { "node": "HA: Sperrschwelle lesen", "type": "main", "index": 0 },
+          { "node": "HA: Boostschwelle lesen", "type": "main", "index": 0 },
+          { "node": "HA: Steuerung aktiv?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "HA: Aktuellen Preis lesen": {
+      "main": [[{ "node": "Werte zusammenführen", "type": "main", "index": 0 }]]
+    },
+    "HA: Sperrschwelle lesen": {
+      "main": [[{ "node": "Werte zusammenführen", "type": "main", "index": 1 }]]
+    },
+    "HA: Boostschwelle lesen": {
+      "main": [[{ "node": "Werte zusammenführen", "type": "main", "index": 2 }]]
+    },
+    "HA: Steuerung aktiv?": {
+      "main": [[{ "node": "Werte zusammenführen", "type": "main", "index": 3 }]]
+    },
+    "Werte zusammenführen": {
+      "main": [[{ "node": "Entscheidung berechnen", "type": "main", "index": 0 }]]
+    },
+    "Entscheidung berechnen": {
+      "main": [
+        [
+          { "node": "Sperre-Änderung nötig?", "type": "main", "index": 0 },
+          { "node": "Boost-Änderung nötig?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Sperre-Änderung nötig?": {
+      "main": [
+        [{ "node": "HA: Sperre setzen", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Boost-Änderung nötig?": {
+      "main": [
+        [{ "node": "HA: Boost setzen", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
