@@ -20,96 +20,91 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.HA_BASE_URL }}/api/states/sensor.home_strompreis",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
-        "options": {}
+        "resource": "state",
+        "operation": "get",
+        "entityId": "sensor.home_strompreis"
       },
-      "id": "http-preis",
+      "id": "ha-preis",
       "name": "HA: Preis lesen",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.homeAssistant",
+      "typeVersion": 1,
       "position": [-740, 60],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
-          "name": "HA Long-Lived Token"
+        "homeAssistantApi": {
+          "id": "PLACEHOLDER_HA_API_CREDENTIAL_ID",
+          "name": "Home Assistant API"
         }
       }
     },
     {
       "parameters": {
-        "url": "={{ $env.HA_BASE_URL }}/api/states/switch.boiler_heatingoff",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
-        "options": {}
+        "resource": "state",
+        "operation": "get",
+        "entityId": "switch.boiler_heatingoff"
       },
-      "id": "http-sperrstatus",
+      "id": "ha-sperrstatus",
       "name": "HA: Sperr-Status lesen",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.homeAssistant",
+      "typeVersion": 1,
       "position": [-740, 200],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
-          "name": "HA Long-Lived Token"
+        "homeAssistantApi": {
+          "id": "PLACEHOLDER_HA_API_CREDENTIAL_ID",
+          "name": "Home Assistant API"
         }
       }
     },
     {
       "parameters": {
-        "url": "={{ $env.HA_BASE_URL }}/api/states/climate.thermostat_hc1",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
-        "options": {}
+        "resource": "state",
+        "operation": "get",
+        "entityId": "climate.thermostat_hc1"
       },
-      "id": "http-heizkreis",
+      "id": "ha-heizkreis",
       "name": "HA: Heizkreis-Status lesen",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.homeAssistant",
+      "typeVersion": 1,
       "position": [-740, 340],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
-          "name": "HA Long-Lived Token"
+        "homeAssistantApi": {
+          "id": "PLACEHOLDER_HA_API_CREDENTIAL_ID",
+          "name": "Home Assistant API"
         }
       }
     },
     {
       "parameters": {
-        "url": "={{ $env.HA_BASE_URL }}/api/states/sensor.marstek_venus_modbus_wechselrichter_status",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
-        "options": {}
+        "resource": "state",
+        "operation": "get",
+        "entityId": "sensor.marstek_venus_modbus_wechselrichter_status"
       },
-      "id": "http-speicherstatus",
+      "id": "ha-speicherstatus",
       "name": "HA: Speicher-Status lesen",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.homeAssistant",
+      "typeVersion": 1,
       "position": [-740, 480],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
-          "name": "HA Long-Lived Token"
+        "homeAssistantApi": {
+          "id": "PLACEHOLDER_HA_API_CREDENTIAL_ID",
+          "name": "Home Assistant API"
         }
       }
     },
     {
       "parameters": {
-        "url": "={{ $env.HA_BASE_URL }}/api/states/sensor.marstek_venus_modbus_soc_batterie",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
-        "options": {}
+        "resource": "state",
+        "operation": "get",
+        "entityId": "sensor.marstek_venus_modbus_soc_batterie"
       },
-      "id": "http-speichersoc",
+      "id": "ha-speichersoc",
       "name": "HA: Speicher-SoC lesen",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.homeAssistant",
+      "typeVersion": 1,
       "position": [-740, 620],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
-          "name": "HA Long-Lived Token"
+        "homeAssistantApi": {
+          "id": "PLACEHOLDER_HA_API_CREDENTIAL_ID",
+          "name": "Home Assistant API"
         }
       }
     },
@@ -189,47 +184,59 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.HA_BASE_URL }}/api/services/switch/{{ $json.sperre_service }}",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\"entity_id\": \"switch.boiler_heatingoff\"}",
-        "options": {}
+        "resource": "service",
+        "operation": "call",
+        "domain": "switch",
+        "service": "={{ $json.sperre_service }}",
+        "serviceAttributes": {
+          "attributes": [
+            {
+              "name": "entity_id",
+              "value": "switch.boiler_heatingoff"
+            }
+          ]
+        }
       },
-      "id": "http-sperre-setzen",
+      "id": "ha-sperre-setzen",
       "name": "HA: Wärmepumpe sperren/freigeben",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.homeAssistant",
+      "typeVersion": 1,
       "position": [220, 60],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
-          "name": "HA Long-Lived Token"
+        "homeAssistantApi": {
+          "id": "PLACEHOLDER_HA_API_CREDENTIAL_ID",
+          "name": "Home Assistant API"
         }
       }
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.HA_BASE_URL }}/api/services/climate/set_hvac_mode",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\"entity_id\": \"climate.thermostat_hc1\", \"hvac_mode\": \"{{ $json.climate_hvac_mode }}\"}",
-        "options": {}
+        "resource": "service",
+        "operation": "call",
+        "domain": "climate",
+        "service": "set_hvac_mode",
+        "serviceAttributes": {
+          "attributes": [
+            {
+              "name": "entity_id",
+              "value": "climate.thermostat_hc1"
+            },
+            {
+              "name": "hvac_mode",
+              "value": "={{ $json.climate_hvac_mode }}"
+            }
+          ]
+        }
       },
-      "id": "http-boost-setzen",
+      "id": "ha-boost-setzen",
       "name": "HA: Heizkreis-Modus setzen",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.homeAssistant",
+      "typeVersion": 1,
       "position": [220, 380],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
-          "name": "HA Long-Lived Token"
+        "homeAssistantApi": {
+          "id": "PLACEHOLDER_HA_API_CREDENTIAL_ID",
+          "name": "Home Assistant API"
         }
       }
     }
