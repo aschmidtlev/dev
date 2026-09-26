@@ -16,7 +16,7 @@
       "name": "Alle 15 Minuten",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [-1120, 260]
+      "position": [-980, 200]
     },
     {
       "parameters": {
@@ -26,10 +26,10 @@
         "options": {}
       },
       "id": "http-preis",
-      "name": "HA: Aktuellen Preis lesen",
+      "name": "HA: Preis lesen",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-880, 40],
+      "position": [-740, 60],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
@@ -39,16 +39,16 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.HA_BASE_URL }}/api/states/input_number.wp_sperrschwelle",
+        "url": "={{ $env.HA_BASE_URL }}/api/states/switch.warmepumpe",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "httpHeaderAuth",
         "options": {}
       },
-      "id": "http-sperrschwelle",
-      "name": "HA: Sperrschwelle lesen",
+      "id": "http-sperrstatus",
+      "name": "HA: Sperr-Status lesen",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-880, 180],
+      "position": [-740, 200],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
@@ -58,16 +58,16 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.HA_BASE_URL }}/api/states/input_number.wp_boostschwelle",
+        "url": "={{ $env.HA_BASE_URL }}/api/states/climate.thermostat_hc1",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "httpHeaderAuth",
         "options": {}
       },
-      "id": "http-boostschwelle",
-      "name": "HA: Boostschwelle lesen",
+      "id": "http-heizkreis",
+      "name": "HA: Heizkreis-Status lesen",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-880, 320],
+      "position": [-740, 340],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
@@ -77,42 +77,23 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.HA_BASE_URL }}/api/states/input_boolean.wp_preissteuerung_aktiv",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
-        "options": {}
-      },
-      "id": "http-aktiv",
-      "name": "HA: Steuerung aktiv?",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [-880, 460],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
-          "name": "HA Long-Lived Token"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "numberInputs": 4
+        "numberInputs": 3
       },
       "id": "merge-inputs",
       "name": "Werte zusammenführen",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [-620, 260]
+      "position": [-500, 200]
     },
     {
       "parameters": {
-        "jsCode": "// Erwartet 4 Inputs (per Position): Preis, Sperrschwelle, Boostschwelle, Aktiv-Flag\nconst preis = parseFloat($input.all()[0].json.state);\nconst sperrschwelle = parseFloat($input.all()[1].json.state);\nconst boostschwelle = parseFloat($input.all()[2].json.state);\nconst aktiv = $input.all()[3].json.state === 'on';\n\n// Hysterese, um Takten am Schwellwert zu vermeiden (ct/kWh)\nconst hysterese = 1.5;\n\nconst sperreAn = aktiv && preis > (sperrschwelle + hysterese);\nconst sperreAus = !aktiv || preis <= (sperrschwelle - hysterese);\nconst boostAn = aktiv && preis < (boostschwelle - hysterese);\nconst boostAus = !aktiv || preis >= (boostschwelle + hysterese);\n\n// Bei Werten innerhalb der Hysteresebreite: vorherigen Zustand halten (kein Service-Call unten notwendig,\n// da HA turn_on/turn_off idempotent sind – wir wählen hier bewusst nur einen klaren An/Aus-Fall).\nreturn [{\n  json: {\n    preis,\n    sperrschwelle,\n    boostschwelle,\n    aktiv,\n    sperre_service: sperreAn ? 'turn_on' : (sperreAus ? 'turn_off' : null),\n    boost_service: boostAn ? 'turn_on' : (boostAus ? 'turn_off' : null)\n  }\n}];"
+        "jsCode": "// --- Konfiguration: hier anpassen, keine eigenen HA-Helper nötig ---\nconst sperrschwelle = 40;      // ct/kWh, ab hier wird die Wärmepumpe hart gesperrt\nconst boostschwelle = 20;      // ct/kWh, darunter wird aktiv geheizt (hvac_mode=heat statt auto)\nconst hysterese = 1.5;         // ct/kWh Puffer gegen Takten am Schwellwert\n// ---------------------------------------------------------------\n\nconst preis = parseFloat($input.all()[0].json.state);\nconst sperreAktuellAn = $input.all()[1].json.state === 'off'; // switch.warmepumpe aus = aktuell gesperrt\nconst hvacAktuell = $input.all()[2].json.state; // 'auto' | 'heat'\n\n// Sperre: einschalten (Wärmepumpe stromlos) wenn Preis deutlich über der Schwelle,\n// aufheben wenn Preis deutlich darunter. Kein Wechsel innerhalb der Hysteresebreite.\nlet sperre_service = null;\nif (!sperreAktuellAn && preis > sperrschwelle + hysterese) {\n  sperre_service = 'turn_off'; // switch.warmepumpe ausschalten = sperren\n} else if (sperreAktuellAn && preis <= sperrschwelle - hysterese) {\n  sperre_service = 'turn_on'; // Sperre aufheben\n}\n\n// Boost: hvac_mode 'heat' erzwingt aktives Heizen (statt witterungsgeführt 'auto'),\n// wenn der Preis günstig ist. Keine Änderung, wenn gerade gesperrt wird/ist.\nlet climate_hvac_mode = null;\nconst wirdOderIstGesperrt = sperre_service === 'turn_off' || (sperreAktuellAn && sperre_service !== 'turn_on');\nif (!wirdOderIstGesperrt) {\n  if (hvacAktuell !== 'heat' && preis < boostschwelle - hysterese) {\n    climate_hvac_mode = 'heat';\n  } else if (hvacAktuell !== 'auto' && preis >= boostschwelle + hysterese) {\n    climate_hvac_mode = 'auto';\n  }\n}\n\nreturn [{\n  json: { preis, sperreAktuellAn, hvacAktuell, sperre_service, climate_hvac_mode }\n}];"
       },
       "id": "code-entscheidung",
       "name": "Entscheidung berechnen",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-400, 260]
+      "position": [-260, 200]
     },
     {
       "parameters": {
@@ -139,7 +120,7 @@
       "name": "Sperre-Änderung nötig?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [-160, 140]
+      "position": [-20, 100]
     },
     {
       "parameters": {
@@ -151,7 +132,7 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ $json.boost_service }}",
+              "leftValue": "={{ $json.climate_hvac_mode }}",
               "rightValue": null,
               "operator": {
                 "type": "string",
@@ -166,24 +147,24 @@
       "name": "Boost-Änderung nötig?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [-160, 380]
+      "position": [-20, 320]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.HA_BASE_URL }}/api/services/input_boolean/{{ $json.sperre_service }}",
+        "url": "={{ $env.HA_BASE_URL }}/api/services/switch/{{ $json.sperre_service }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\"entity_id\": \"input_boolean.wp_sperre\"}",
+        "jsonBody": "={\"entity_id\": \"switch.warmepumpe\"}",
         "options": {}
       },
       "id": "http-sperre-setzen",
-      "name": "HA: Sperre setzen",
+      "name": "HA: Wärmepumpe sperren/freigeben",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [80, 100],
+      "position": [220, 60],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
@@ -194,19 +175,19 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.HA_BASE_URL }}/api/services/input_boolean/{{ $json.boost_service }}",
+        "url": "={{ $env.HA_BASE_URL }}/api/services/climate/set_hvac_mode",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\"entity_id\": \"input_boolean.wp_boost\"}",
+        "jsonBody": "={\"entity_id\": \"climate.thermostat_hc1\", \"hvac_mode\": \"{{ $json.climate_hvac_mode }}\"}",
         "options": {}
       },
       "id": "http-boost-setzen",
-      "name": "HA: Boost setzen",
+      "name": "HA: Heizkreis-Modus setzen",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [80, 420],
+      "position": [220, 380],
       "credentials": {
         "httpHeaderAuth": {
           "id": "PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID",
@@ -219,24 +200,20 @@
     "Alle 15 Minuten": {
       "main": [
         [
-          { "node": "HA: Aktuellen Preis lesen", "type": "main", "index": 0 },
-          { "node": "HA: Sperrschwelle lesen", "type": "main", "index": 0 },
-          { "node": "HA: Boostschwelle lesen", "type": "main", "index": 0 },
-          { "node": "HA: Steuerung aktiv?", "type": "main", "index": 0 }
+          { "node": "HA: Preis lesen", "type": "main", "index": 0 },
+          { "node": "HA: Sperr-Status lesen", "type": "main", "index": 0 },
+          { "node": "HA: Heizkreis-Status lesen", "type": "main", "index": 0 }
         ]
       ]
     },
-    "HA: Aktuellen Preis lesen": {
+    "HA: Preis lesen": {
       "main": [[{ "node": "Werte zusammenführen", "type": "main", "index": 0 }]]
     },
-    "HA: Sperrschwelle lesen": {
+    "HA: Sperr-Status lesen": {
       "main": [[{ "node": "Werte zusammenführen", "type": "main", "index": 1 }]]
     },
-    "HA: Boostschwelle lesen": {
+    "HA: Heizkreis-Status lesen": {
       "main": [[{ "node": "Werte zusammenführen", "type": "main", "index": 2 }]]
-    },
-    "HA: Steuerung aktiv?": {
-      "main": [[{ "node": "Werte zusammenführen", "type": "main", "index": 3 }]]
     },
     "Werte zusammenführen": {
       "main": [[{ "node": "Entscheidung berechnen", "type": "main", "index": 0 }]]
@@ -251,13 +228,13 @@
     },
     "Sperre-Änderung nötig?": {
       "main": [
-        [{ "node": "HA: Sperre setzen", "type": "main", "index": 0 }],
+        [{ "node": "HA: Wärmepumpe sperren/freigeben", "type": "main", "index": 0 }],
         []
       ]
     },
     "Boost-Änderung nötig?": {
       "main": [
-        [{ "node": "HA: Boost setzen", "type": "main", "index": 0 }],
+        [{ "node": "HA: Heizkreis-Modus setzen", "type": "main", "index": 0 }],
         []
       ]
     }
