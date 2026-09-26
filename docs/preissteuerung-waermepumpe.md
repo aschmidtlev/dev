@@ -44,9 +44,11 @@ Ablauf (alle 15 Minuten):
 Schwellen (`sperrschwelle`, `boostschwelle`, `hysterese`, `speicherFreigabeSoc`, `speicherHystereseSoc`) stehen als Konstanten oben im Code-Node – zum Anpassen den Workflow in n8n öffnen und dort editieren, keine separate HA-Konfiguration nötig.
 
 ### Setup in n8n
-- Environment-Variable `HA_BASE_URL` (z. B. `http://homeassistant.local:8123`).
-- Credential vom Typ „Header Auth" namens „HA Long-Lived Token" mit Header `Authorization: Bearer <Long-Lived Access Token>`. Die Platzhalter-Credential-ID (`PLACEHOLDER_HA_TOKEN_CREDENTIAL_ID`) muss beim Import in n8n neu verknüpft werden.
+- Alle HA-Zugriffe laufen über die nativen n8n-Nodes „Home Assistant" (State/Get bzw. Service/Call), nicht über generische HTTP-Request-Nodes – dadurch keine Environment-Variable und kein Header-Auth-Credential nötig.
+- Credential vom Typ „Home Assistant API" (Felder: Host, Port, SSL, Long-Lived Access Token) namens „Home Assistant API". Die Platzhalter-Credential-ID (`PLACEHOLDER_HA_API_CREDENTIAL_ID`) muss beim Import in n8n neu mit dem eigenen, bereits angelegten Credential verknüpft werden (auf jedem der 6 Home-Assistant-Nodes).
 - Workflow ist beim Import inaktiv (`active: false`) – bewusst, erst nach finaler Prüfung durch Andreas scharf schalten.
+
+**Hinweis zur ursprünglichen Fassung:** Die erste Version nutzte generische HTTP-Request-Nodes mit `{{ $env.HA_BASE_URL }}` und einem „Header Auth"-Credential. Das scheiterte, weil Environment-Variablen in dieser n8n-Instanz nicht per UI nutzbar sind. Der `homeAssistantApi`-Credential-Typ lässt sich technisch nicht als „Predefined Credential Type" im generischen HTTP-Request-Node verwenden (er hat kein `authenticate`-Schema) – deshalb der Umstieg auf die nativen Home-Assistant-Nodes, die Host/Port/Token direkt aus dem Credential lesen.
 
 ## Geprüft: kein Konflikt mit Warmwasser/WW-System
 
